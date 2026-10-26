@@ -35,10 +35,18 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         1. If a local trained checkpoint exists, loads StreamingCTCAcousticModel.
         2. Else loads standard Wav2Vec2-CTC PyTorch weights onto CUDA for instant high-accuracy mic recognition.
         """
-        custom_ckpt = checkpoint_path or "backend/app/ml/checkpoints/model.pt"
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        default_ckpt = os.path.join(base_dir, "ml", "checkpoints", "model.pt")
+        custom_ckpt = checkpoint_path or default_ckpt
+
+        if torch.cuda.is_available():
+            print(f"🚀 Initializing Deep Learning Model on CUDA GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            print("⚠️ CUDA not available in this Python environment. Running on CPU.")
+
         if os.path.exists(custom_ckpt):
             try:
-                print(f" Loading custom Deep Learning CTC checkpoint from {custom_ckpt} onto {self.device}...")
+                print(f"📦 Loading custom Deep Learning CTC checkpoint from {custom_ckpt} onto {self.device}...")
                 self.model = StreamingCTCAcousticModel().to(self.device)
                 self.model.load_state_dict(torch.load(custom_ckpt, map_location=self.device))
                 self.model.eval()

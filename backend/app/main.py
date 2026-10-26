@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import uuid
 import asyncio
@@ -101,7 +101,14 @@ async def websocket_transcribe(websocket: WebSocket):
 
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                message = await websocket.receive()
+            except (WebSocketDisconnect, RuntimeError):
+                break
+
+            if message.get("type") == "websocket.disconnect":
+                break
+
             if "text" in message:
                 data = json.loads(message["text"])
                 action = data.get("action")
