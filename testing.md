@@ -1,19 +1,20 @@
 ﻿# Testing Guide: Selective Commitment Streaming ASR
 
-This document provides a comprehensive test plan and step-by-step verification procedures for the **TWO 26 Selective Commitment Speech Recognition** system, covering automated unit tests, offline reproducible benchmarks, live streaming playback, and microphone edge cases.
+This document provides a comprehensive test plan and step-by-step verification procedures for the **TWO 26 Selective Commitment Speech Recognition** system, covering on-device PyTorch deep learning models (NVIDIA RTX 3050 GPU), model training routines, automated unit tests, offline reproducible benchmarks, live streaming playback, and microphone edge cases.
 
 ---
 
 ## 1. System & Service Architecture Under Test
 
 - **Backend API**: FastAPI (`http://127.0.0.1:8000`)
-  - Health Endpoint: `GET /health`
+  - Health Endpoint: `GET /health` (reports CUDA GPU status, PyTorch model availability, and active policies)
   - Offline Replay Scorer: `POST /api/replay`
   - Real-Time WebSocket Streaming: `ws://127.0.0.1:8000/ws/transcribe`
 - **Frontend Client**: Vite + React + TypeScript (`http://localhost:5173/`)
-- **Adapters**:
-  - `DeterministicMockRecognizer`: Scripted incremental playback with simulated acoustic revisions (`test` $\rightarrow$ `testing`).
-  - `AWSTranscribeAdapter`: Real cloud streaming recognition via AWS Transcribe.
+- **Acoustic Recognizer Adapters**:
+  - `DeepLearningRecognizer` (**Default / On-Device**): Runs a PyTorch CTC Acoustic Neural Network (Mel Spectrogram $\rightarrow$ 1D Conv $\rightarrow$ BiLSTM $\rightarrow$ CTC Projection) locally on the **NVIDIA GeForce RTX 3050 Laptop GPU (CUDA 12.4)** without external cloud APIs.
+  - `DeterministicMockRecognizer`: Scripted incremental playback with simulated acoustic revisions (`test` $\rightarrow$ `testing`) for reproducible offline evaluation.
+  - `AWSTranscribeAdapter`: Optional cloud streaming fallback via AWS Transcribe.
 
 ---
 
@@ -21,14 +22,21 @@ This document provides a comprehensive test plan and step-by-step verification p
 
 Before executing the tests, verify both the backend and frontend services are running:
 
-### A. Verify Backend
+### A. Verify Backend & GPU Acceleration
 Open a terminal and run:
 ```powershell
 backend\venv\Scripts\python -c "import httpx; r = httpx.get('http://127.0.0.1:8000/health'); print(r.json())"
 ```
 **Expected Output:**
 ```json
-{"status": "healthy", "aws_streaming_available": true, "supported_policies": ["raw_streaming", "fixed_delay", "selective_commitment"]}
+{
+  "status": "healthy",
+  "deep_learning_available": true,
+  "cuda_available": true,
+  "gpu_name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+  "aws_streaming_available": true,
+  "supported_policies": ["raw_streaming", "fixed_delay", "selective_commitment"]
+}
 ```
 
 ### B. Verify Frontend
@@ -36,19 +44,42 @@ Open your browser and navigate to:
 ```
 http://localhost:5173/
 ```
-Verify the top status pill displays: **"Backend Engine Online"**.
+Verify the top status pills display:
+- **`● CUDA Active (NVIDIA GeForce RTX 3050 A Laptop GPU)`**
+- **`Local Deep Learning Model`**
 
 ---
 
-## 3. Automated Test Suite (Pytest)
+## 3. Deep Learning Model Training & Automated Unit Tests
 
-Run the backend unit tests for text normalization, Levenshtein WER computation, hypothesis alignment, and policy transitions:
+### A. Test On-Device PyTorch CTC Acoustic Model Training
+Verify that the custom neural network can train directly on your RTX 3050 GPU using pure PyTorch `nn.CTCLoss`:
 
 ```powershell
+cd d:\Projects\College\Cloud\backend
+venv\Scripts\python.exe -m app.ml.train
+```
+
+**Expected Training Output:**
+```text
+ Starting CTC Acoustic Model Training on device: CUDA
+Epoch 01/05 | CTC Loss: 5.9738 | Time: 0.76s
+Epoch 02/05 | CTC Loss: 3.2603 | Time: 0.19s
+Epoch 03/05 | CTC Loss: 2.9375 | Time: 0.18s
+Epoch 04/05 | CTC Loss: 2.9097 | Time: 0.18s
+Epoch 05/05 | CTC Loss: 2.6144 | Time: 0.22s
+ Training complete. Model checkpoint saved to: backend/app/ml/checkpoints/model.pt
+```
+
+### B. Run Backend Pytest Suite
+Run the unit test suite verifying text normalization, Levenshtein WER computation, hypothesis alignment, and policy transitions:
+
+```powershell
+cd d:\Projects\College\Cloud
 backend\venv\Scripts\python -m pytest backend\tests -v
 ```
 
-### What This Tests:
+**What This Tests:**
 1. `test_normalize_text`: Punctuation stripping, case folding, and whitespace normalization.
 2. `test_compute_wer_exact_match`: Identical strings produce $0.0\%$ WER.
 3. `test_compute_wer_substitution_and_deletion`: Confirms dynamic programming edit distance for substitutions, deletions, and insertions.
@@ -76,7 +107,27 @@ backend/tests/test_policy_and_alignment.py::test_raw_streaming_baseline PASSED
 
 ## 4. End-to-End Test Scenarios
 
-### Test Scenario 1: Offline Replay Benchmark (Zero Hardware Dependency)
+### Test Scenario 1: Real-Time Deep Learning Streaming (RTX 3050 GPU)
+**Goal:** Verify on-device neural acoustic inference from live microphone audio without third-party cloud APIs.
+
+1. Open `http://localhost:5173/` in your browser.
+2. Confirm **Recognizer Adapter** is set to **Local Deep Learning Model (GPU)**.
+3. Set **Commitment Policy** to **Selective Commitment (Proposed)**.
+4. Click **"Start Streaming"** (or top-right **"Start Stream ↗"**).
+5. When prompted by your browser, grant microphone access.
+6. Speak a sentence clearly (e.g., *"We are demonstrating real-time streaming speech recognition"*).
+7. **Expected Observations**:
+   - Audio chunks (16 kHz 16-bit linear PCM) are sent over the WebSocket.
+   - The backend runs GPU forward inference every ~300ms using the PyTorch neural network.
+   - Live partial hypotheses appear in the transcript area:
+     - **Provisional tokens**: Highlighted in electric orange with dashed underlines and update counts (e.g., `1u`).
+     - **Committed tokens**: Stable words turn ink-black with solid underlines once they persist for $\ge K$ updates.
+8. Click **"Stop Streaming"**.
+9. The final utterance reconciliation executes, and all remaining words transition to finalized.
+
+---
+
+### Test Scenario 2: Offline Replay Benchmark (Zero Hardware Dependency)
 **Goal:** Verify repeatable evaluation metrics, WER computation, and revision tracking without needing microphone input.
 
 1. Navigate to `http://localhost:5173/`.
@@ -96,13 +147,13 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/replay" -Method Post -ContentT
 
 ---
 
-### Test Scenario 2: Visual Selective Commitment & Revision Animation
+### Test Scenario 3: Visual Selective Commitment & Revision Animation
 **Goal:** Visually verify the distinct states of provisional spans, committed spans, and revisions in real-time.
 
-1. Keep **Recognizer Adapter** set to **Deterministic Synthetic Mock**.
+1. Switch **Recognizer Adapter** to **Deterministic Synthetic Mock**.
 2. Set **Commitment Policy** to **Selective Commitment (Proposed)**.
 3. Set **Stability Threshold** to **2 updates**.
-4. Click **"Start Streaming"** (or top-right **"Start Stream ↗"**).
+4. Click **"Start Streaming"**.
 5. **Observe the Live Transcript Area**:
    - Newly arrived words appear as **Provisional**:
      - Electric orange text with warm peach pillow background (`#ffebe3`).
@@ -117,11 +168,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/replay" -Method Post -ContentT
      - Hovering over `"testing"` displays a tooltip showing the revision history: `(Prev: test)`.
    - Upon final hypothesis:
      - All remaining provisional tokens transition to committed/finalized.
-     - Top pill updates from "Listening" to completed.
 
 ---
 
-### Test Scenario 3: Baseline Policy Comparisons
+### Test Scenario 4: Baseline Policy Comparisons
 **Goal:** Validate that the proposed policy achieves lower display latency than fixed-delay and lower visual churn than raw streaming.
 
 | Policy | Configuration | Expected Visual Behavior | Expected Revision Churn |
@@ -129,28 +179,6 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/replay" -Method Post -ContentT
 | **Selective Commitment** | `Stability = 2`, `Deadline = 2.5s` | Spans commit individually as each stabilizes. Stable prefix remains locked. | Minimal (1 revision on true acoustic correction). |
 | **Raw Streaming** | `Raw Streaming Baseline` | All tokens remain provisional (orange dashed) throughout the entire utterance until the very end. High visual instability. | High potential flicker. |
 | **Fixed Delay** | `Lag Frontier = 3 tokens` | Monotonically commits tokens strictly 3 words behind the frontier, regardless of token confidence or stability. | Rigid delay; slow first commitment. |
-
-**Steps to test**:
-1. Switch **Commitment Policy** dropdown to **Raw Streaming**.
-2. Click **Start Streaming** and observe that all tokens stay provisional until the end.
-3. Switch **Commitment Policy** dropdown to **Fixed Delay**.
-4. Click **Start Streaming** and observe tokens committing only once they lag 3 tokens behind.
-
----
-
-### Test Scenario 4: Live Microphone Audio Capture
-**Goal:** Verify browser microphone audio streaming through 16-bit 16 kHz linear PCM.
-
-1. Ensure a working microphone is connected to your computer.
-2. Under **Recognizer Adapter**, select **AWS Transcribe Streaming** (or Synthetic Mock if AWS credentials are not set).
-3. Click **"Start Streaming"**.
-4. When prompted by your browser, click **"Allow"** for microphone permissions.
-5. Speak clearly into the microphone.
-6. Verify:
-   - Red/Orange "Listening" pulsing indicator appears in the transcript header.
-   - Audio chunks are processed without UI stutter or memory leaks.
-7. Click **"Stop Streaming"**.
-8. Verify the audio tracks are released and the session gracefully finalizes.
 
 ---
 
@@ -174,11 +202,13 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/replay" -Method Post -ContentT
 
 | # | Feature / Test Case | Tool / Method | Pass Criteria |
 | :---: | :--- | :--- | :---: |
-| **1** | Unit Tests | `pytest backend/tests` | 6/6 tests passing (100%) |
-| **2** | Backend Health | `GET /health` | HTTP 200, status `healthy` |
-| **3** | Replay Benchmark API | `POST /api/replay` | WER: 0.0%, 1 revision tracked |
-| **4** | UI Theme & Layout | Browser inspection | Warm cream palette, giant orange title, stickers, retro cards |
-| **5** | Token State Distinction | Visual test | Committed (black/solid), Provisional (orange/dashed), Revised (purple/badge) |
-| **6** | Policy Switching | Controls dropdown | Live switching between Selective, Raw, and Fixed Delay |
-| **7** | Web Audio Capture | Microphone test | 16kHz PCM audio stream via WebSockets |
-| **8** | Session Finalization | Replay / Stop stream | All provisional tokens reconcile to final transcript |
+| **1** | PyTorch CUDA GPU Detection | `backend/app/main.py /health` | `cuda_available: true`, `gpu_name: NVIDIA GeForce RTX 3050 A Laptop GPU` |
+| **2** | CTC Acoustic Model Training | `python -m app.ml.train` | Model trains on CUDA, loss decreases, checkpoint saved |
+| **3** | Unit Tests | `pytest backend/tests` | 6/6 tests passing (100%) |
+| **4** | Replay Benchmark API | `POST /api/replay` | WER: 0.0%, 1 revision tracked |
+| **5** | Real-time Deep Learning Mic ASR | Live audio streaming | Neural inference decodes speech on GPU into selective commitment spans |
+| **6** | UI Theme & Layout | Browser inspection | TWO 26 warm cream palette, giant orange title, stickers, retro cards |
+| **7** | Token State Distinction | Visual test | Committed (black/solid), Provisional (orange/dashed), Revised (purple/badge) |
+| **8** | Policy Switching | Controls dropdown | Live switching between Selective, Raw, and Fixed Delay |
+| **9** | Web Audio Capture | Microphone test | 16kHz PCM audio stream via WebSockets |
+| **10** | Session Finalization | Replay / Stop stream | All provisional tokens reconcile to final transcript |
