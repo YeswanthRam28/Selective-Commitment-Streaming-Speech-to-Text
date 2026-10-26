@@ -47,7 +47,7 @@ def train_ctc_model(
     num_epochs: int = 15,
     lr: float = 3e-4,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    save_path: str = "backend/app/ml/checkpoints/model.pt"
+    save_path: str = "app/ml/checkpoints/model.pt"
 ):
     """
     Trains the StreamingCTCAcousticModel using CTC loss on the given GPU/CPU device.
