@@ -1,4 +1,4 @@
-﻿import os
+import os
 import asyncio
 import time
 import numpy as np
@@ -129,17 +129,30 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
                 )
                 await self.queue.put(event)
 
+    def _trim_leading_silence(self, audio_np: np.ndarray, threshold: float = 0.008) -> np.ndarray:
+        """Trims leading silence to prevent CTC hallucination on quiet room noise."""
+        if len(audio_np) == 0:
+            return audio_np
+        frame_len = 320 # 20ms at 16kHz
+        num_frames = len(audio_np) // frame_len
+        for f in range(num_frames):
+            frame = audio_np[f * frame_len : (f + 1) * frame_len]
+            if np.sqrt(np.mean(frame**2)) > threshold:
+                start_idx = max(0, f * frame_len - 1600) # 100ms acoustic cushion
+                return audio_np[start_idx:]
+        return audio_np
+
     def _infer(self, audio_np: np.ndarray) -> tuple[str, List[dict]]:
         """Executes forward pass of deep learning network on GPU."""
         # Silence gating: ignore pure background noise/hiss
         rms = np.sqrt(np.mean(audio_np**2))
-        if rms < 0.006:
+        if rms < 0.005:
             return "", []
 
-        # Peak normalization for clear acoustic dynamic range
-        peak = np.max(np.abs(audio_np))
-        if peak > 0.01:
-            audio_np = audio_np / peak
+        # Trim leading quiet frames to avoid hallucinating consonants on room hiss
+        audio_np = self._trim_leading_silence(audio_np)
+        if len(audio_np) < 1600: # at least 100ms
+            return "", []
 
         with torch.no_grad():
             if self.use_hf_pretrained and self.hf_model is not None:
@@ -147,14 +160,26 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
                 input_values = inputs.input_values.to(self.device)
 
                 logits = self.hf_model(input_values).logits # (1, Time, Vocab)
-                pred_ids = torch.argmax(logits, dim=-1)[0]
-                text = self.hf_processor.decode(pred_ids)
+                probs = torch.softmax(logits, dim=-1)[0] # (Time, Vocab)
+                max_probs, pred_ids = torch.max(probs, dim=-1)
+
+                text = self.hf_processor.decode(pred_ids).strip()
+                if not text:
+                    return "", []
+
+                # Compute acoustic confidence across non-blank predicted frames
+                pad_id = getattr(self.hf_processor.tokenizer, "pad_token_id", 0)
+                non_blank_mask = pred_ids != pad_id
+                if non_blank_mask.any():
+                    conf = float(max_probs[non_blank_mask].mean().item())
+                else:
+                    conf = 0.90
 
                 words = []
                 for w in text.split():
                     words.append({
                         "word": w.strip().lower(),
-                        "confidence": 0.94
+                        "confidence": round(conf, 3)
                     })
                 return text.lower().strip(), words
             else:

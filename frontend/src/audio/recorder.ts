@@ -1,4 +1,4 @@
-﻿export class AudioRecorder {
+export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
@@ -21,28 +21,38 @@
       },
     });
 
+    // Request 16000 Hz directly so browser performs hardware-grade anti-aliased resampling
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.audioContext = new AudioCtx();
+    try {
+      this.audioContext = new AudioCtx({ sampleRate: 16000 });
+    } catch {
+      this.audioContext = new AudioCtx();
+    }
     const source = this.audioContext.createMediaStreamSource(this.mediaStream);
 
     const actualSampleRate = this.audioContext.sampleRate;
-    console.log(`🎙️ Microphone AudioContext initialized at native hardware sample rate: ${actualSampleRate} Hz`);
+    console.log(`🎙️ Microphone AudioContext initialized at sample rate: ${actualSampleRate} Hz`);
 
-    // Buffer size 4096 gives ~85ms chunk at 48kHz or ~256ms chunk at 16kHz
+    // Buffer size 4096 gives ~256ms chunk at 16kHz
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
       if (!this.isRecording) return;
       const inputData = e.inputBuffer.getChannelData(0);
       
-      // Resample hardware audio (e.g. 48kHz / 44.1kHz) cleanly to 16kHz
-      const resampled = this.downsampleTo16k(inputData, actualSampleRate);
+      // Resample to 16kHz if browser did not support 16kHz context
+      const resampled = actualSampleRate === 16000 ? inputData : this.downsampleTo16k(inputData, actualSampleRate);
       const pcm16 = this.floatTo16BitPCM(resampled);
       this.onChunk(pcm16.buffer.slice(0) as ArrayBuffer);
     };
 
+    // Mute feedback to speakers so mic doesn't pick up speaker loop
+    const muteGain = this.audioContext.createGain();
+    muteGain.gain.value = 0;
+
     source.connect(this.processor);
-    this.processor.connect(this.audioContext.destination);
+    this.processor.connect(muteGain);
+    muteGain.connect(this.audioContext.destination);
     this.isRecording = true;
   }
 
