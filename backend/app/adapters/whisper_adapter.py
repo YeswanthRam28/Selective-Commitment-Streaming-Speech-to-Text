@@ -82,11 +82,9 @@ class WhisperRecognizer(BaseRecognizerAdapter):
                 inputs = self.processor(audio_np, sampling_rate=16000, return_tensors="pt")
                 input_features = inputs.input_features.to(self.device)
 
-                # Generate autoregressive tokens
+                # Generate autoregressive tokens (English-only model handles task/language implicitly)
                 predicted_ids = self.model.generate(
                     input_features,
-                    language="en",
-                    task="transcribe",
                     max_new_tokens=64,
                     no_repeat_ngram_size=3
                 )
