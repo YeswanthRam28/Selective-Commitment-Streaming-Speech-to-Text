@@ -25,6 +25,12 @@ try:
 except Exception as e:
     DL_AVAILABLE = False
 
+try:
+    from app.adapters.whisper_adapter import WhisperRecognizer
+    WHISPER_AVAILABLE = True
+except Exception as e:
+    WHISPER_AVAILABLE = False
+
 app = FastAPI(title="Selective Commitment Streaming ASR API", version="1.0.0")
 
 app.add_middleware(
@@ -42,6 +48,7 @@ async def health():
     return {
         "status": "healthy",
         "deep_learning_available": DL_AVAILABLE,
+        "whisper_available": WHISPER_AVAILABLE,
         "cuda_available": cuda_avail,
         "gpu_name": gpu_name,
         "aws_streaming_available": AWS_AVAILABLE,
@@ -114,13 +121,15 @@ async def websocket_transcribe(websocket: WebSocket):
                 action = data.get("action")
 
                 if action == "start":
-                    provider = data.get("provider", "deep_learning")
+                    provider = data.get("provider", "whisper")
                     policy_dict = data.get("policy_config", {})
                     config = PolicyConfig(**policy_dict)
 
                     session = TranscriptionSession(session_id, config)
 
-                    if provider in ("deep_learning", "local_dl") and DL_AVAILABLE:
+                    if provider in ("whisper", "deep_learning_whisper") and WHISPER_AVAILABLE:
+                        adapter = WhisperRecognizer()
+                    elif provider in ("deep_learning", "local_dl", "wav2vec2") and DL_AVAILABLE:
                         adapter = DeepLearningRecognizer()
                     elif provider == "aws" and AWS_AVAILABLE:
                         adapter = AWSTranscribeAdapter()
@@ -130,7 +139,12 @@ async def websocket_transcribe(websocket: WebSocket):
                     await adapter.start_session(session_id)
                     worker_task = asyncio.create_task(event_forwarder())
 
-                    actual_provider = "deep_learning" if isinstance(adapter, DeepLearningRecognizer) else ("aws" if isinstance(adapter, AWSTranscribeAdapter) else "mock")
+                    actual_provider = (
+                        "whisper" if isinstance(adapter, WhisperRecognizer)
+                        else ("deep_learning" if isinstance(adapter, DeepLearningRecognizer)
+                        else ("aws" if isinstance(adapter, AWSTranscribeAdapter)
+                        else "mock"))
+                    )
                     await websocket.send_json({
                         "type": "session_started",
                         "session_id": session_id,

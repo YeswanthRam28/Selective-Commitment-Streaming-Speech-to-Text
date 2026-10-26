@@ -13,7 +13,7 @@ const DEFAULT_CONFIG: PolicyConfig = {
 };
 
 export const App: React.FC = () => {
-  const [provider, setProvider] = useState<'deep_learning' | 'mock' | 'aws'>('deep_learning');
+  const [provider, setProvider] = useState<'whisper' | 'deep_learning' | 'mock' | 'aws'>('whisper');
   const [config, setConfig] = useState<PolicyConfig>(DEFAULT_CONFIG);
   const [isListening, setIsListening] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
@@ -23,6 +23,7 @@ export const App: React.FC = () => {
   const [serverHealth, setServerHealth] = useState<{
     status: string;
     deep_learning_available: boolean;
+    whisper_available?: boolean;
     cuda_available: boolean;
     gpu_name?: string;
     aws_streaming_available: boolean;
@@ -209,9 +210,11 @@ export const App: React.FC = () => {
                 : (serverHealth ? 'Backend Online (CPU)' : 'Connecting to Backend...')}
             </span>
             <span className="status-badge-pill">
-              {provider === 'deep_learning'
-                ? 'Local Deep Learning Model'
-                : (provider === 'aws' ? 'AWS Transcribe Stream' : 'Deterministic Mock Mode')}
+              {provider === 'whisper'
+                ? 'OpenAI Whisper (GPU)'
+                : (provider === 'deep_learning'
+                  ? 'CTC Wav2Vec2 (GPU)'
+                  : (provider === 'aws' ? 'AWS Transcribe Stream' : 'Deterministic Mock Mode'))}
             </span>
           </div>
         </section>

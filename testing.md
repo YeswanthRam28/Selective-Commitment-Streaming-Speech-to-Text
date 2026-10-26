@@ -1,4 +1,4 @@
-﻿# Testing Guide: Selective Commitment Streaming ASR
+# Testing Guide: Selective Commitment Streaming ASR
 
 This document provides a comprehensive test plan and step-by-step verification procedures for the **TWO 26 Selective Commitment Speech Recognition** system, covering on-device PyTorch deep learning models (NVIDIA RTX 3050 GPU), model training routines, automated unit tests, offline reproducible benchmarks, live streaming playback, and microphone edge cases.
 
@@ -32,6 +32,7 @@ backend\venv\Scripts\python -c "import httpx; r = httpx.get('http://127.0.0.1:80
 {
   "status": "healthy",
   "deep_learning_available": true,
+  "whisper_available": true,
   "cuda_available": true,
   "gpu_name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
   "aws_streaming_available": true,
@@ -46,7 +47,7 @@ http://localhost:5173/
 ```
 Verify the top status pills display:
 - **`● CUDA Active (NVIDIA GeForce RTX 3050 A Laptop GPU)`**
-- **`Local Deep Learning Model`**
+- **`OpenAI Whisper (GPU)`** (or CTC Wav2Vec2)
 
 ---
 

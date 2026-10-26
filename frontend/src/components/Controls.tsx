@@ -3,9 +3,9 @@ import type { PolicyConfig, PolicyMode } from '../types';
 
 interface ControlsProps {
   isListening: boolean;
-  provider: 'deep_learning' | 'mock' | 'aws';
+  provider: 'whisper' | 'deep_learning' | 'mock' | 'aws';
   config: PolicyConfig;
-  onToggleProvider: (p: 'deep_learning' | 'mock' | 'aws') => void;
+  onToggleProvider: (p: 'whisper' | 'deep_learning' | 'mock' | 'aws') => void;
   onUpdateConfig: (cfg: Partial<PolicyConfig>) => void;
   onStartStreaming: () => void;
   onStopStreaming: () => void;
@@ -53,9 +53,10 @@ export const Controls: React.FC<ControlsProps> = ({
             className="control-select"
             value={provider}
             disabled={isListening}
-            onChange={(e) => onToggleProvider(e.target.value as 'deep_learning' | 'aws' | 'mock')}
+            onChange={(e) => onToggleProvider(e.target.value as 'whisper' | 'deep_learning' | 'aws' | 'mock')}
           >
-            <option value="deep_learning">Local Deep Learning Model (GPU)</option>
+            <option value="whisper">OpenAI Whisper (On-Device GPU)</option>
+            <option value="deep_learning">CTC Acoustic Model Wav2Vec2 (GPU)</option>
             <option value="mock">Deterministic Synthetic Mock</option>
             <option value="aws">AWS Transcribe Streaming</option>
           </select>
