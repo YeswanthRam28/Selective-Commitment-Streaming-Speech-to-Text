@@ -6,6 +6,7 @@ import torch
 from typing import AsyncGenerator, Optional, List
 from app.adapters.base import BaseRecognizerAdapter
 from app.models.events import HypothesisEvent, WordItem
+from app.audio_processing import clean_speech_audio
 
 class WhisperRecognizer(BaseRecognizerAdapter):
     """
@@ -67,30 +68,43 @@ class WhisperRecognizer(BaseRecognizerAdapter):
         return audio_np
 
     def _infer(self, audio_np: np.ndarray) -> tuple[str, List[dict]]:
-        """Runs forward Whisper pass on GPU."""
+        """Runs forward Whisper pass on GPU with audio denoising and anti-hallucination masks."""
         rms = np.sqrt(np.mean(audio_np**2))
         if rms < 0.005:
             return "", []
 
+        # Step 1: Remove stationary laptop fan whine and out-of-band noise
+        audio_np = clean_speech_audio(audio_np, sr=16000)
+
+        # Step 2: Trim leading room silence
         audio_np = self._trim_leading_silence(audio_np)
         if len(audio_np) < 3200: # at least 200ms
             return "", []
 
         try:
             with torch.no_grad():
-                # Extract log-mel filterbanks
-                inputs = self.processor(audio_np, sampling_rate=16000, return_tensors="pt")
+                # Extract log-mel filterbanks with explicit attention_mask for variable length audio
+                inputs = self.processor(audio_np, sampling_rate=16000, return_tensors="pt", return_attention_mask=True)
                 input_features = inputs.input_features.to(self.device)
+                attention_mask = inputs.attention_mask.to(self.device) if "attention_mask" in inputs else None
 
-                # Generate autoregressive tokens (English-only model handles task/language implicitly)
+                # Generate autoregressive tokens deterministically (temperature=0.0) without sampling hallucinations
                 predicted_ids = self.model.generate(
                     input_features,
-                    max_new_tokens=64,
+                    attention_mask=attention_mask,
+                    temperature=0.0,
+                    max_new_tokens=48,
                     no_repeat_ngram_size=3
                 )
                 transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
 
                 if not transcription:
+                    return "", []
+
+                # Filter common Whisper silence hallucinations
+                lower_trans = transcription.lower()
+                hallucination_phrases = ["subtitles by", "thank you for watching", "open ai", "amara.org", "subscribe"]
+                if any(phrase in lower_trans for phrase in hallucination_phrases):
                     return "", []
 
                 # Remove trailing punctuation to normalize into tokens for selective commitment

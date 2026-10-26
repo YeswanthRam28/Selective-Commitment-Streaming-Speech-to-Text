@@ -7,6 +7,7 @@ from typing import AsyncGenerator, Optional, List
 from app.adapters.base import BaseRecognizerAdapter
 from app.models.events import HypothesisEvent, WordItem
 from app.ml.model import StreamingCTCAcousticModel, extract_mel_spectrogram, CTCGreedyDecoder
+from app.audio_processing import clean_speech_audio
 
 class DeepLearningRecognizer(BaseRecognizerAdapter):
     """
@@ -143,11 +144,14 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         return audio_np
 
     def _infer(self, audio_np: np.ndarray) -> tuple[str, List[dict]]:
-        """Executes forward pass of deep learning network on GPU."""
+        """Executes forward pass of deep learning network on GPU with audio denoising."""
         # Silence gating: ignore pure background noise/hiss
         rms = np.sqrt(np.mean(audio_np**2))
         if rms < 0.005:
             return "", []
+
+        # Remove laptop fan noise and out-of-band hiss
+        audio_np = clean_speech_audio(audio_np, sr=16000)
 
         # Trim leading quiet frames to avoid hallucinating consonants on room hiss
         audio_np = self._trim_leading_silence(audio_np)

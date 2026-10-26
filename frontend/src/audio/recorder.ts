@@ -46,11 +46,33 @@ export class AudioRecorder {
       this.onChunk(pcm16.buffer.slice(0) as ArrayBuffer);
     };
 
+    // Browser DSP noise filtering chain:
+    // 1. Highpass (85 Hz) to cut low-frequency fan vibration & rumble
+    const highpass = this.audioContext.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 85;
+
+    // 2. Lowpass (7500 Hz) to cut high-frequency fan hiss & electronic noise
+    const lowpass = this.audioContext.createBiquadFilter();
+    lowpass.type = 'lowpass';
+    lowpass.frequency.value = 7500;
+
+    // 3. Dynamics Compressor to level speech and boost quiet syllables
+    const compressor = this.audioContext.createDynamicsCompressor();
+    compressor.threshold.value = -24;
+    compressor.knee.value = 30;
+    compressor.ratio.value = 12;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+
     // Mute feedback to speakers so mic doesn't pick up speaker loop
     const muteGain = this.audioContext.createGain();
     muteGain.gain.value = 0;
 
-    source.connect(this.processor);
+    source.connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(compressor);
+    compressor.connect(this.processor);
     this.processor.connect(muteGain);
     muteGain.connect(this.audioContext.destination);
     this.isRecording = true;
