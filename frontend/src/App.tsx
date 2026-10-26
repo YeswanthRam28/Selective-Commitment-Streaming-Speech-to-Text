@@ -135,67 +135,117 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="app-container">
-      {/* Top Navbar */}
-      <header className="navbar">
-        <div className="nav-brand">
-          <span className="brand-logo">??</span>
-          <div>
-            <h1 className="brand-title">Selective Commitment ASR</h1>
-            <p className="brand-subtitle">Real-time Streaming Hypothesis Policy Engine</p>
+    <>
+      {/* Background doodles */}
+      <div className="bg-doodle-left"></div>
+      <div className="bg-doodle-right"></div>
+
+      <div className="app-container">
+        {/* Editorial Navbar */}
+        <header className="navbar">
+          <div className="nav-left">
+            <button className="pill-btn" onClick={() => handleUpdateConfig({ mode: 'selective_commitment' })}>
+              Selective Engine
+            </button>
+            <button className="pill-btn" onClick={() => handleUpdateConfig({ mode: 'raw_streaming' })}>
+              Raw Baseline
+            </button>
           </div>
-        </div>
 
-        <div className="nav-badges">
-          <span className={`status-pill ${serverHealth ? 'status-online' : 'status-offline'}`}>
-            {serverHealth ? 'Backend Online' : 'Backend Disconnected'}
-          </span>
-          <span className="provider-pill">
-            {provider === 'aws'
-              ? serverHealth?.aws_streaming_available
-                ? 'AWS Transcribe Ready'
-                : 'AWS (Fallback to Mock)'
-              : 'Deterministic Mock Mode'}
-          </span>
-        </div>
-      </header>
+          <a href="#" className="brand-center">
+            TWO <span>26</span>
+          </a>
 
-      {/* Main Content Layout */}
-      <main className="main-content">
-        {/* Controls Bar */}
-        <Controls
-          isListening={isListening}
-          provider={provider}
-          config={config}
-          onToggleProvider={setProvider}
-          onUpdateConfig={handleUpdateConfig}
-          onStartStreaming={startStreaming}
-          onStopStreaming={stopStreaming}
-          onRunReplay={runReplayEvaluation}
-          onClear={clearTranscript}
-          isReplaying={isReplaying}
-        />
+          <div className="nav-right">
+            <div className="nav-schedule">
+              Streaming Audio<br />
+              16kHz Mono PCM
+            </div>
+            {!isListening ? (
+              <button
+                className="cta-black-pill"
+                onClick={startStreaming}
+                disabled={isReplaying}
+                title="Start streaming audio from microphone"
+              >
+                <span>Start Stream</span>
+                <span className="cta-orange-circle">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+                </span>
+              </button>
+            ) : (
+              <button
+                className="cta-black-pill"
+                style={{ background: '#ff4800' }}
+                onClick={stopStreaming}
+                title="Stop current streaming session"
+              >
+                <span>Stop Stream</span>
+                <span className="cta-orange-circle" style={{ background: '#121212' }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+                </span>
+              </button>
+            )}
+          </div>
+        </header>
 
-        {/* Live Transcript View */}
-        <TranscriptView spans={spans} isListening={isListening} />
+        {/* Hero Poster */}
+        <section className="hero-poster">
+          <div className="sticker-tag sticker-left">Selective Commitment</div>
+          <div className="sticker-tag sticker-right">Zero Output Flicker</div>
+          <h1 className="hero-giant-title">
+            STREAMING<br />SUSPICIOUSLY GOOD
+          </h1>
+          <div className="hero-badges-row">
+            <span className="status-badge-pill badge-online">
+              {serverHealth ? 'Backend Engine Online' : 'Connecting to Backend...'}
+            </span>
+            <span className="status-badge-pill">
+              {provider === 'aws'
+                ? serverHealth?.aws_streaming_available
+                  ? 'AWS Transcribe Stream'
+                  : 'AWS (Fallback to Mock)'
+                : 'Deterministic Mock Mode'}
+            </span>
+          </div>
+        </section>
 
-        {/* Real-time Metrics and Evaluation */}
-        <MetricsPanel
-          spans={spans}
-          updateCount={updateCount}
-          replayResult={replayResult}
-        />
-      </main>
+        {/* Main Content Layout */}
+        <main className="main-content">
+          {/* Controls Card */}
+          <Controls
+            isListening={isListening}
+            provider={provider}
+            config={config}
+            onToggleProvider={setProvider}
+            onUpdateConfig={handleUpdateConfig}
+            onStartStreaming={startStreaming}
+            onStopStreaming={stopStreaming}
+            onRunReplay={runReplayEvaluation}
+            onClear={clearTranscript}
+            isReplaying={isReplaying}
+          />
 
-      {/* Footer / Architecture notes */}
-      <footer className="app-footer">
-        <p>
-          Selective Commitment Policy decouples provisional hypothesis tokens from committed text,
-          isolating revisions and eliminating output flicker during streaming recognition.
-        </p>
-      </footer>
-    </div>
+          {/* Live Transcript View */}
+          <TranscriptView spans={spans} isListening={isListening} />
+
+          {/* Real-time Metrics and Evaluation */}
+          <MetricsPanel
+            spans={spans}
+            updateCount={updateCount}
+            replayResult={replayResult}
+          />
+        </main>
+
+        {/* Studio Footer */}
+        <footer className="app-footer">
+          <p>
+            TWO 26 • Selective Commitment Speech Recognition Policy Engine. Decoupling provisional hypotheses from stable output.
+          </p>
+        </footer>
+      </div>
+    </>
   );
 };
 
-export default App;
+export default App;

@@ -34,7 +34,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   const totalRevisions = spans.reduce((acc, s) => acc + s.revised_count, 0);
 
   return (
-    <div className="metrics-card">
+    <div className="studio-card metrics-card">
       <h3 className="card-subtitle">Real-time Policy Metrics</h3>
       <div className="metrics-grid">
         <div className="metric-box">

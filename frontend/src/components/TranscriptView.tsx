@@ -8,7 +8,7 @@ interface TranscriptViewProps {
 
 export const TranscriptView: React.FC<TranscriptViewProps> = ({ spans, isListening }) => {
   return (
-    <div className="transcript-card">
+    <div className="studio-card transcript-card">
       <div className="transcript-header">
         <div className="transcript-title-group">
           <h2 className="card-title">Live Incremental Transcript</h2>

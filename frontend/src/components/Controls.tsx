@@ -27,7 +27,7 @@ export const Controls: React.FC<ControlsProps> = ({
   isReplaying,
 }) => {
   return (
-    <div className="controls-card">
+    <div className="studio-card controls-card">
       <div className="controls-grid">
         {/* Policy Selector */}
         <div className="control-group">
@@ -130,7 +130,10 @@ export const Controls: React.FC<ControlsProps> = ({
             onClick={onStartStreaming}
             disabled={isReplaying}
           >
-            <span className="btn-icon">???</span> Start Streaming
+            <span className="btn-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+            </span>
+            Start Streaming
           </button>
         ) : (
           <button
@@ -138,7 +141,10 @@ export const Controls: React.FC<ControlsProps> = ({
             className="btn btn-danger"
             onClick={onStopStreaming}
           >
-            <span className="btn-icon">?</span> Stop Streaming
+            <span className="btn-icon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            </span>
+            Stop Streaming
           </button>
         )}
 
@@ -148,7 +154,10 @@ export const Controls: React.FC<ControlsProps> = ({
           onClick={onRunReplay}
           disabled={isListening || isReplaying}
         >
-          <span className="btn-icon">?</span> Run Replay Evaluation
+          <span className="btn-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          </span>
+          Run Replay Evaluation
         </button>
 
         <button
