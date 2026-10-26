@@ -1,4 +1,4 @@
-export class AudioRecorder {
+﻿export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
@@ -15,7 +15,6 @@ export class AudioRecorder {
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        sampleRate: 16000,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -23,17 +22,23 @@ export class AudioRecorder {
     });
 
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.audioContext = new AudioCtx({ sampleRate: 16000 });
+    this.audioContext = new AudioCtx();
     const source = this.audioContext.createMediaStreamSource(this.mediaStream);
 
-    // Buffer size 4096 gives ~256ms chunk interval at 16kHz
+    const actualSampleRate = this.audioContext.sampleRate;
+    console.log(`🎙️ Microphone AudioContext initialized at native hardware sample rate: ${actualSampleRate} Hz`);
+
+    // Buffer size 4096 gives ~85ms chunk at 48kHz or ~256ms chunk at 16kHz
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
       if (!this.isRecording) return;
       const inputData = e.inputBuffer.getChannelData(0);
-      const pcm16 = this.floatTo16BitPCM(inputData);
-      this.onChunk((pcm16.buffer.slice(0) as ArrayBuffer));
+      
+      // Resample hardware audio (e.g. 48kHz / 44.1kHz) cleanly to 16kHz
+      const resampled = this.downsampleTo16k(inputData, actualSampleRate);
+      const pcm16 = this.floatTo16BitPCM(resampled);
+      this.onChunk(pcm16.buffer.slice(0) as ArrayBuffer);
     };
 
     source.connect(this.processor);
@@ -58,6 +63,21 @@ export class AudioRecorder {
       this.audioContext.close();
       this.audioContext = null;
     }
+  }
+
+  private downsampleTo16k(input: Float32Array, inputSampleRate: number): Float32Array {
+    if (inputSampleRate === 16000) return input;
+    const ratio = inputSampleRate / 16000;
+    const newLength = Math.round(input.length / ratio);
+    const result = new Float32Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      const origIndex = i * ratio;
+      const indexFloor = Math.floor(origIndex);
+      const indexCeil = Math.min(input.length - 1, Math.ceil(origIndex));
+      const fraction = origIndex - indexFloor;
+      result[i] = input[indexFloor] * (1 - fraction) + input[indexCeil] * fraction;
+    }
+    return result;
   }
 
   private floatTo16BitPCM(input: Float32Array): Int16Array {

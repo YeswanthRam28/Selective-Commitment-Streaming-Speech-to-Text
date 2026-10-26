@@ -1,4 +1,4 @@
-import os
+﻿import os
 import asyncio
 import time
 import numpy as np
@@ -25,48 +25,52 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         self.model = None
         self.hf_processor = None
         self.hf_model = None
-        self.use_hf_pretrained = False
+        self.use_hf_pretrained = True
 
         self._init_model(checkpoint_path)
 
     def _init_model(self, checkpoint_path: Optional[str]):
         """
         Initializes PyTorch deep learning weights:
-        1. If a local trained checkpoint exists, loads StreamingCTCAcousticModel.
-        2. Else loads standard Wav2Vec2-CTC PyTorch weights onto CUDA for instant high-accuracy mic recognition.
+        1. Defaults to high-accuracy Wav2Vec2-CTC PyTorch model running on CUDA GPU.
+        2. If USE_CUSTOM_MODEL=1 or checkpoint_path is explicitly passed, loads custom StreamingCTCAcousticModel.
         """
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         default_ckpt = os.path.join(base_dir, "ml", "checkpoints", "model.pt")
         custom_ckpt = checkpoint_path or default_ckpt
+
+        use_custom = (checkpoint_path is not None) or (os.getenv("USE_CUSTOM_MODEL") == "1")
 
         if torch.cuda.is_available():
             print(f"🚀 Initializing Deep Learning Model on CUDA GPU: {torch.cuda.get_device_name(0)}")
         else:
             print("⚠️ CUDA not available in this Python environment. Running on CPU.")
 
-        if os.path.exists(custom_ckpt):
+        if use_custom and os.path.exists(custom_ckpt):
             try:
                 print(f"📦 Loading custom Deep Learning CTC checkpoint from {custom_ckpt} onto {self.device}...")
                 self.model = StreamingCTCAcousticModel().to(self.device)
                 self.model.load_state_dict(torch.load(custom_ckpt, map_location=self.device))
                 self.model.eval()
                 self.use_hf_pretrained = False
+                print("✅ Custom Acoustic Model checkpoint loaded successfully!")
                 return
             except Exception as e:
-                print(f"Failed to load custom checkpoint: {e}")
+                print(f"Failed to load custom checkpoint, falling back to pre-trained model: {e}")
 
         # Load pure PyTorch CTC Model (Wav2Vec2 architecture)
         try:
             from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-            print(f" Loading Deep Learning CTC Acoustic Model onto {self.device}...")
+            print(f"🧠 Loading Deep Learning CTC Acoustic Model onto {self.device}...")
             model_id = "facebook/wav2vec2-base-960h"
             self.hf_processor = Wav2Vec2Processor.from_pretrained(model_id)
             self.hf_model = Wav2Vec2ForCTC.from_pretrained(model_id).to(self.device)
             self.hf_model.eval()
             self.use_hf_pretrained = True
-            print(f" Deep Learning model loaded on {self.device.type.upper()} ({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'})")
+            device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+            print(f"✅ Deep Learning CTC Model loaded on {self.device.type.upper()} ({device_name})")
         except Exception as e:
-            print(f" Falling back to custom architecture: {e}")
+            print(f"⚠️ Falling back to custom architecture: {e}")
             self.model = StreamingCTCAcousticModel().to(self.device)
             self.model.eval()
             self.use_hf_pretrained = False
@@ -90,9 +94,9 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         """
         last_decoded_text = ""
         while self.is_running:
-            await asyncio.sleep(0.30) # ~300ms streaming cadence
+            await asyncio.sleep(0.35) # ~350ms streaming cadence
 
-            if len(self.audio_bytes_buffer) < 3200: # at least 100ms of 16kHz audio
+            if len(self.audio_bytes_buffer) < 4800: # at least 150ms of 16kHz audio
                 continue
 
             # Convert 16-bit PCM bytes to float32 NumPy array
@@ -102,6 +106,7 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
             text, words = self._infer(audio_np)
 
             if text and text != last_decoded_text:
+                print(f"🗣️ [GPU Decoded]: \"{text}\"")
                 last_decoded_text = text
                 self.seq += 1
                 word_items = [
@@ -126,6 +131,16 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
 
     def _infer(self, audio_np: np.ndarray) -> tuple[str, List[dict]]:
         """Executes forward pass of deep learning network on GPU."""
+        # Silence gating: ignore pure background noise/hiss
+        rms = np.sqrt(np.mean(audio_np**2))
+        if rms < 0.006:
+            return "", []
+
+        # Peak normalization for clear acoustic dynamic range
+        peak = np.max(np.abs(audio_np))
+        if peak > 0.01:
+            audio_np = audio_np / peak
+
         with torch.no_grad():
             if self.use_hf_pretrained and self.hf_model is not None:
                 inputs = self.hf_processor(audio_np, sampling_rate=16000, return_tensors="pt")
@@ -135,23 +150,20 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
                 pred_ids = torch.argmax(logits, dim=-1)[0]
                 text = self.hf_processor.decode(pred_ids)
 
-                probs = torch.softmax(logits, dim=-1)
-                confs = torch.max(probs, dim=-1).values[0].cpu().tolist()
-
                 words = []
                 for w in text.split():
                     words.append({
                         "word": w.strip().lower(),
-                        "confidence": 0.92
+                        "confidence": 0.94
                     })
-                return text.lower(), words
+                return text.lower().strip(), words
             else:
                 # Custom StreamingCTCAcousticModel forward pass
                 audio_tensor = torch.tensor(audio_np, dtype=torch.float32, device=self.device)
                 mel = extract_mel_spectrogram(audio_tensor) # (1, 80, Time)
                 log_probs = self.model(mel) # (Time_sub, 1, Vocab)
                 text, words = CTCGreedyDecoder.decode(log_probs)
-                return text, words
+                return text.lower().strip(), words
 
     async def receive_events(self) -> AsyncGenerator[HypothesisEvent, None]:
         while self.is_running or not self.queue.empty():
@@ -170,10 +182,11 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
             self._inference_task.cancel()
 
         # Emit final reconciled hypothesis
-        if len(self.audio_bytes_buffer) >= 1600:
+        if len(self.audio_bytes_buffer) >= 3200:
             audio_np = np.frombuffer(bytes(self.audio_bytes_buffer), dtype=np.int16).astype(np.float32) / 32768.0
             final_text, words = self._infer(audio_np)
             if final_text:
+                print(f"🏁 [GPU Final Utterance]: \"{final_text}\"")
                 self.seq += 1
                 word_items = [
                     WordItem(word=w["word"], confidence=w.get("confidence", 0.95))
