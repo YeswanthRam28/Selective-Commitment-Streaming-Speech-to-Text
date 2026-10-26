@@ -13,14 +13,20 @@ const DEFAULT_CONFIG: PolicyConfig = {
 };
 
 export const App: React.FC = () => {
-  const [provider, setProvider] = useState<'mock' | 'aws'>('mock');
+  const [provider, setProvider] = useState<'deep_learning' | 'mock' | 'aws'>('deep_learning');
   const [config, setConfig] = useState<PolicyConfig>(DEFAULT_CONFIG);
   const [isListening, setIsListening] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
   const [spans, setSpans] = useState<TranscriptSpan[]>([]);
   const [updateCount, setUpdateCount] = useState(0);
   const [replayResult, setReplayResult] = useState<any | null>(null);
-  const [serverHealth, setServerHealth] = useState<{ status: string; aws_streaming_available: boolean } | null>(null);
+  const [serverHealth, setServerHealth] = useState<{
+    status: string;
+    deep_learning_available: boolean;
+    cuda_available: boolean;
+    gpu_name?: string;
+    aws_streaming_available: boolean;
+  } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
@@ -198,14 +204,14 @@ export const App: React.FC = () => {
           </h1>
           <div className="hero-badges-row">
             <span className="status-badge-pill badge-online">
-              {serverHealth ? 'Backend Engine Online' : 'Connecting to Backend...'}
+              {serverHealth?.cuda_available
+                ? `CUDA Active (${serverHealth.gpu_name || 'RTX 3050'})`
+                : (serverHealth ? 'Backend Online (CPU)' : 'Connecting to Backend...')}
             </span>
             <span className="status-badge-pill">
-              {provider === 'aws'
-                ? serverHealth?.aws_streaming_available
-                  ? 'AWS Transcribe Stream'
-                  : 'AWS (Fallback to Mock)'
-                : 'Deterministic Mock Mode'}
+              {provider === 'deep_learning'
+                ? 'Local Deep Learning Model'
+                : (provider === 'aws' ? 'AWS Transcribe Stream' : 'Deterministic Mock Mode')}
             </span>
           </div>
         </section>

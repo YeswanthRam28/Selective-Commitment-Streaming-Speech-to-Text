@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import uuid
 import asyncio
@@ -13,6 +13,18 @@ from app.adapters.mock_adapter import DeterministicMockRecognizer, DEFAULT_MOCK_
 from app.adapters.aws_adapter import AWSTranscribeAdapter, AWS_AVAILABLE
 from app.metrics.evaluator import compute_wer
 
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+try:
+    from app.adapters.deep_learning_adapter import DeepLearningRecognizer
+    DL_AVAILABLE = True
+except Exception as e:
+    DL_AVAILABLE = False
+
 app = FastAPI(title="Selective Commitment Streaming ASR API", version="1.0.0")
 
 app.add_middleware(
@@ -25,8 +37,13 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
+    cuda_avail = torch.cuda.is_available() if TORCH_AVAILABLE else False
+    gpu_name = torch.cuda.get_device_name(0) if cuda_avail else None
     return {
         "status": "healthy",
+        "deep_learning_available": DL_AVAILABLE,
+        "cuda_available": cuda_avail,
+        "gpu_name": gpu_name,
         "aws_streaming_available": AWS_AVAILABLE,
         "supported_policies": [m.value for m in PolicyMode]
     }
@@ -90,13 +107,15 @@ async def websocket_transcribe(websocket: WebSocket):
                 action = data.get("action")
 
                 if action == "start":
-                    provider = data.get("provider", "mock")
+                    provider = data.get("provider", "deep_learning")
                     policy_dict = data.get("policy_config", {})
                     config = PolicyConfig(**policy_dict)
 
                     session = TranscriptionSession(session_id, config)
 
-                    if provider == "aws" and AWS_AVAILABLE:
+                    if provider in ("deep_learning", "local_dl") and DL_AVAILABLE:
+                        adapter = DeepLearningRecognizer()
+                    elif provider == "aws" and AWS_AVAILABLE:
                         adapter = AWSTranscribeAdapter()
                     else:
                         adapter = DeterministicMockRecognizer()
@@ -104,10 +123,11 @@ async def websocket_transcribe(websocket: WebSocket):
                     await adapter.start_session(session_id)
                     worker_task = asyncio.create_task(event_forwarder())
 
+                    actual_provider = "deep_learning" if isinstance(adapter, DeepLearningRecognizer) else ("aws" if isinstance(adapter, AWSTranscribeAdapter) else "mock")
                     await websocket.send_json({
                         "type": "session_started",
                         "session_id": session_id,
-                        "provider": provider if (provider == "aws" and AWS_AVAILABLE) else "mock",
+                        "provider": actual_provider,
                         "policy_mode": config.mode.value
                     })
 
