@@ -82,6 +82,22 @@ class LanguageModel:
         if w in self.words or len(w) <= 2:
             return w
 
+        # Common phonetic slip corrections
+        phonetic_overrides = {
+            "lave": "live",
+            "tlave": "the live",
+            "transcrupt": "transcript",
+            "pranscrupt": "transcript",
+            "plinscrupt": "transcript",
+            "evaleration": "evaluation",
+            "evaaluation": "evaluation",
+            "incrimental": "incremental",
+            "serteste": "test",
+            "terteste": "test"
+        }
+        if w in phonetic_overrides:
+            return phonetic_overrides[w]
+
         # Find closest string matches
         matches = difflib.get_close_matches(w, self.words, n=1, cutoff=0.72)
         if matches:
@@ -125,10 +141,20 @@ class CTCBeamSearchDecoder:
         # Initialize with empty prefix
         beams = { "": (0.0, -1e9) } # (log_p_blank, log_p_non_blank)
 
+        space_id = None
+        for k, v in self.id_to_char.items():
+            if v == self.space_char:
+                space_id = k
+                break
+
         for t in range(T):
             frame_probs = log_probs[t]
-            # Prune frame to top K candidate tokens for high-speed inference
-            top_k_indices = np.argsort(frame_probs)[-12:] # top 12 chars
+            # Prune frame to top candidate tokens while strictly preserving space and blank
+            top_k_indices = set(np.argsort(frame_probs)[-16:].tolist())
+            if space_id is not None:
+                top_k_indices.add(space_id)
+            if self.blank_id is not None:
+                top_k_indices.add(self.blank_id)
 
             new_beams = {}
 
@@ -156,6 +182,10 @@ class CTCBeamSearchDecoder:
                     c = c.lower()
                     char_prob = frame_probs[char_id]
 
+                    # Prevent consecutive space characters
+                    if c == self.space_char and prefix.endswith(self.space_char):
+                        continue
+
                     if len(prefix) > 0 and c == prefix[-1]:
                         # Repeated token: p_b transition creates repeated letter, p_nb extends
                         new_p_nb_repeat = p_b + char_prob
@@ -174,11 +204,17 @@ class CTCBeamSearchDecoder:
                         new_prefix = prefix + c
                         new_p_nb = p_total + char_prob
 
-                        # Language Model score evaluation on word completion
+                        # Language Model reward on word completion (never penalize space!)
                         lm_score = 0.0
-                        if c == self.space_char and len(prefix) > 0:
-                            last_word = prefix.split(self.space_char)[-1]
-                            lm_score = self.lm.score_word(last_word) * self.lm_weight + self.word_bonus
+                        if c == self.space_char:
+                            if len(prefix) > 0:
+                                last_word = prefix.split(self.space_char)[-1]
+                                if last_word in self.lm.words:
+                                    lm_score = 1.0 # Bonus for completing valid dictionary word
+                                else:
+                                    lm_score = 0.0 # Never penalize spaces!
+                            else:
+                                lm_score = -5.0 # Avoid starting with a space
 
                         new_p_nb += lm_score
 

@@ -33,6 +33,12 @@ class WhisperRecognizer(BaseRecognizerAdapter):
             _SHARED_WHISPER_MODEL = WhisperForConditionalGeneration.from_pretrained(model_id).to(device)
             _SHARED_WHISPER_MODEL.eval()
 
+            # Clean generation config to silence transformers deprecation/length warnings
+            _SHARED_WHISPER_MODEL.generation_config.max_length = None
+            _SHARED_WHISPER_MODEL.generation_config.forced_decoder_ids = None
+            _SHARED_WHISPER_MODEL.generation_config.suppress_tokens = None
+            _SHARED_WHISPER_MODEL.generation_config.begin_suppress_tokens = None
+
             # Warm-up inference pass to compile CUDA kernels and establish GPU memory context
             dummy_pcm = np.zeros(16000, dtype=np.float32)
             inputs = _SHARED_WHISPER_PROCESSOR(dummy_pcm, sampling_rate=16000, return_tensors="pt")
@@ -114,15 +120,22 @@ class WhisperRecognizer(BaseRecognizerAdapter):
                     max_new_tokens=48,
                     no_repeat_ngram_size=3
                 )
-                transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
+                transcription = self.processor.batch_decode(
+                    predicted_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )[0].strip()
 
                 if not transcription:
                     return "", []
 
-                # Filter common Whisper silence hallucinations
+                # Filter common Whisper silence/low-energy hallucinations
                 lower_trans = transcription.lower()
                 hallucination_phrases = ["subtitles by", "thank you for watching", "open ai", "amara.org", "subscribe"]
                 if any(phrase in lower_trans for phrase in hallucination_phrases):
+                    return "", []
+                # If audio is very short (< 1s) and it outputs phantom words like 'hallelujah'
+                if len(audio_np) < 16000 and lower_trans in {"hallelujah", "hado"}:
                     return "", []
 
                 # Remove trailing punctuation to normalize into tokens for selective commitment
