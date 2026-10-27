@@ -48,19 +48,12 @@ def spectral_noise_subtraction(audio_np: np.ndarray, sr: int = 16000, n_fft: int
 
 def clean_speech_audio(audio_np: np.ndarray, sr: int = 16000) -> np.ndarray:
     """
-    Full audio denoising pipeline:
-    1. Bandpass filter (85 Hz - 7500 Hz) removes fan vibration and electronic hiss.
-    2. Spectral stationary noise reduction on audio with sufficient background context (>0.75s).
+    Speech audio pre-processing pipeline for neural acoustic models:
+    1. 4th-order Butterworth bandpass (85 Hz - 7500 Hz) eliminates mic rumble and Nyquist artifacts.
+    2. Preserves natural unvoiced consonants (stops/fricatives like 't', 's', 'v') without spectral distortion.
     """
     if len(audio_np) == 0:
         return audio_np
 
-    # Step 1: Always apply bandpass filter (zero distortion to voice)
-    bp = bandpass_filter(audio_np, sr=sr)
-
-    # Step 2: Apply spectral subtraction only when audio buffer is long enough (>0.75s)
-    # to accurately estimate background noise without subtracting short speech syllables
-    if len(bp) >= 12000:
-        return spectral_noise_subtraction(bp, sr=sr)
-
-    return bp
+    # Apply bandpass filter - transparent to human voice, removes room vibration & AC hum
+    return bandpass_filter(audio_np, sr=sr)
