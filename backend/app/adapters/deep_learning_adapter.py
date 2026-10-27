@@ -8,6 +8,7 @@ from app.adapters.base import BaseRecognizerAdapter
 from app.models.events import HypothesisEvent, WordItem
 from app.ml.model import StreamingCTCAcousticModel, extract_mel_spectrogram, CTCGreedyDecoder
 from app.audio_processing import clean_speech_audio
+from app.ml.language_model import CTCBeamSearchDecoder
 
 _SHARED_WAV2VEC2_PROCESSOR = None
 _SHARED_WAV2VEC2_MODEL = None
@@ -87,6 +88,19 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         self.hf_processor = _SHARED_WAV2VEC2_PROCESSOR
         self.hf_model = _SHARED_WAV2VEC2_MODEL
         self.use_hf_pretrained = True
+
+        # Initialize CTC Beam Search Language Model Decoder
+        vocab = self.hf_processor.tokenizer.get_vocab()
+        id_to_char = {v: k for k, v in vocab.items()}
+        pad_id = getattr(self.hf_processor.tokenizer, "pad_token_id", 0)
+        self.beam_decoder = CTCBeamSearchDecoder(
+            id_to_char=id_to_char,
+            blank_id=pad_id,
+            space_char="|",
+            beam_width=16,
+            lm_weight=0.9,
+            word_bonus=1.2
+        )
 
     async def start_session(self, session_id: str, sample_rate: int = 16000) -> None:
         self.session_id = session_id
@@ -176,27 +190,13 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
                 input_values = inputs.input_values.to(self.device)
 
                 logits = self.hf_model(input_values).logits # (1, Time, Vocab)
-                probs = torch.softmax(logits, dim=-1)[0] # (Time, Vocab)
-                max_probs, pred_ids = torch.max(probs, dim=-1)
+                log_probs = torch.log_softmax(logits[0], dim=-1) # (Time, Vocab)
 
-                text = self.hf_processor.decode(pred_ids).strip()
+                # Beam search decoding with N-gram Language Model
+                text, words = self.beam_decoder.decode(log_probs)
                 if not text:
                     return "", []
 
-                # Compute acoustic confidence across non-blank predicted frames
-                pad_id = getattr(self.hf_processor.tokenizer, "pad_token_id", 0)
-                non_blank_mask = pred_ids != pad_id
-                if non_blank_mask.any():
-                    conf = float(max_probs[non_blank_mask].mean().item())
-                else:
-                    conf = 0.90
-
-                words = []
-                for w in text.split():
-                    words.append({
-                        "word": w.strip().lower(),
-                        "confidence": round(conf, 3)
-                    })
                 return text.lower().strip(), words
             else:
                 # Custom StreamingCTCAcousticModel forward pass

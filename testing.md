@@ -53,24 +53,24 @@ Verify the top status pills display:
 
 ## 3. Deep Learning Model Training & Automated Unit Tests
 
-### A. Test On-Device PyTorch CTC Acoustic Model Training
-Verify that the custom neural network can train directly on your RTX 3050 GPU using pure PyTorch `nn.CTCLoss`:
+### A. Test On-Device PyTorch Fine-Tuning & Training on GPU
+Train the custom acoustic model or fine-tune Wav2Vec2 on real speech datasets (LibriSpeech) on your RTX 3050 GPU:
 
 ```powershell
 cd d:\Projects\College\Cloud\backend
-venv\Scripts\python.exe -m app.ml.train
+
+# Option 1: Fine-tune Wav2Vec2 on real speech (LibriSpeech) on CUDA GPU
+venv\Scripts\python.exe -m app.ml.train --mode finetune --epochs 3 --batch-size 2
+
+# Option 2: Train custom StreamingCTCAcousticModel with SpecAugment from scratch
+venv\Scripts\python.exe -m app.ml.train --mode custom --epochs 5 --batch-size 4
 ```
 
-**Expected Training Output:**
-```text
- Starting CTC Acoustic Model Training on device: CUDA
-Epoch 01/05 | CTC Loss: 5.9738 | Time: 0.76s
-Epoch 02/05 | CTC Loss: 3.2603 | Time: 0.19s
-Epoch 03/05 | CTC Loss: 2.9375 | Time: 0.18s
-Epoch 04/05 | CTC Loss: 2.9097 | Time: 0.18s
-Epoch 05/05 | CTC Loss: 2.6144 | Time: 0.22s
- Training complete. Model checkpoint saved to: backend/app/ml/checkpoints/model.pt
-```
+**What This Tests:**
+1. Ingests real audio waveforms from `RealSpeechDataset` (`backend/app/ml/dataset.py`).
+2. Applies **SpecAugment** (Frequency & Time masking) and noise injection.
+3. Computes PyTorch `nn.CTCLoss` and backpropagates gradients through CUDA cores.
+4. Evaluates validation loss and Word Error Rate (WER) per epoch, saving checkpoints to `app/ml/checkpoints/`.
 
 ### B. Run Backend Pytest Suite
 Run the unit test suite verifying text normalization, Levenshtein WER computation, hypothesis alignment, and policy transitions:
