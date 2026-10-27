@@ -9,12 +9,42 @@ from app.models.events import HypothesisEvent, WordItem
 from app.ml.model import StreamingCTCAcousticModel, extract_mel_spectrogram, CTCGreedyDecoder
 from app.audio_processing import clean_speech_audio
 
+_SHARED_WAV2VEC2_PROCESSOR = None
+_SHARED_WAV2VEC2_MODEL = None
+
 class DeepLearningRecognizer(BaseRecognizerAdapter):
     """
     On-device Deep Learning Streaming Speech Recognizer.
     Executes an acoustic neural network on the local NVIDIA RTX 3050 GPU (CUDA)
     without third-party cloud APIs.
     """
+    @classmethod
+    def preload(cls, checkpoint_path: Optional[str] = None):
+        """Pre-loads and warms up Wav2Vec2 on CUDA GPU at server startup."""
+        global _SHARED_WAV2VEC2_PROCESSOR, _SHARED_WAV2VEC2_MODEL
+        if _SHARED_WAV2VEC2_MODEL is not None and _SHARED_WAV2VEC2_PROCESSOR is not None:
+            return
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+        print(f"[Startup Preload] Loading Wav2Vec2 CTC Model onto {device.type.upper()} ({device_name})...")
+        try:
+            from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+            model_id = "facebook/wav2vec2-base-960h"
+            _SHARED_WAV2VEC2_PROCESSOR = Wav2Vec2Processor.from_pretrained(model_id)
+            _SHARED_WAV2VEC2_MODEL = Wav2Vec2ForCTC.from_pretrained(model_id).to(device)
+            _SHARED_WAV2VEC2_MODEL.eval()
+
+            # Warm-up pass to compile CUDA kernels and initialize memory allocations
+            dummy_pcm = np.zeros(16000, dtype=np.float32)
+            inputs = _SHARED_WAV2VEC2_PROCESSOR(dummy_pcm, sampling_rate=16000, return_tensors="pt")
+            with torch.no_grad():
+                _SHARED_WAV2VEC2_MODEL(inputs.input_values.to(device))
+            print(f"[Startup Preload] Wav2Vec2 CTC Model pre-warmed & ready in GPU memory!")
+        except Exception as e:
+            print(f"[Startup Preload Warning] Failed to preload Wav2Vec2: {e}")
+            raise e
+
     def __init__(self, checkpoint_path: Optional[str] = None):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.session_id: str = ""
@@ -31,21 +61,11 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
         self._init_model(checkpoint_path)
 
     def _init_model(self, checkpoint_path: Optional[str]):
-        """
-        Initializes PyTorch deep learning weights:
-        1. Defaults to high-accuracy Wav2Vec2-CTC PyTorch model running on CUDA GPU.
-        2. If USE_CUSTOM_MODEL=1 or checkpoint_path is explicitly passed, loads custom StreamingCTCAcousticModel.
-        """
+        """Initializes PyTorch deep learning weights using preloaded cache when possible."""
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         default_ckpt = os.path.join(base_dir, "ml", "checkpoints", "model.pt")
         custom_ckpt = checkpoint_path or default_ckpt
-
         use_custom = (checkpoint_path is not None) or (os.getenv("USE_CUSTOM_MODEL") == "1")
-
-        if torch.cuda.is_available():
-            print(f"🚀 Initializing Deep Learning Model on CUDA GPU: {torch.cuda.get_device_name(0)}")
-        else:
-            print("⚠️ CUDA not available in this Python environment. Running on CPU.")
 
         if use_custom and os.path.exists(custom_ckpt):
             try:
@@ -59,22 +79,14 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
             except Exception as e:
                 print(f"Failed to load custom checkpoint, falling back to pre-trained model: {e}")
 
-        # Load pure PyTorch CTC Model (Wav2Vec2 architecture)
-        try:
-            from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-            print(f"🧠 Loading Deep Learning CTC Acoustic Model onto {self.device}...")
-            model_id = "facebook/wav2vec2-base-960h"
-            self.hf_processor = Wav2Vec2Processor.from_pretrained(model_id)
-            self.hf_model = Wav2Vec2ForCTC.from_pretrained(model_id).to(self.device)
-            self.hf_model.eval()
-            self.use_hf_pretrained = True
-            device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-            print(f"✅ Deep Learning CTC Model loaded on {self.device.type.upper()} ({device_name})")
-        except Exception as e:
-            print(f"⚠️ Falling back to custom architecture: {e}")
-            self.model = StreamingCTCAcousticModel().to(self.device)
-            self.model.eval()
-            self.use_hf_pretrained = False
+        # Reuse preloaded Wav2Vec2
+        global _SHARED_WAV2VEC2_PROCESSOR, _SHARED_WAV2VEC2_MODEL
+        if _SHARED_WAV2VEC2_MODEL is None or _SHARED_WAV2VEC2_PROCESSOR is None:
+            self.preload()
+
+        self.hf_processor = _SHARED_WAV2VEC2_PROCESSOR
+        self.hf_model = _SHARED_WAV2VEC2_MODEL
+        self.use_hf_pretrained = True
 
     async def start_session(self, session_id: str, sample_rate: int = 16000) -> None:
         self.session_id = session_id

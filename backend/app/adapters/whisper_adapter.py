@@ -8,12 +8,41 @@ from app.adapters.base import BaseRecognizerAdapter
 from app.models.events import HypothesisEvent, WordItem
 from app.audio_processing import clean_speech_audio
 
+_SHARED_WHISPER_PROCESSOR = None
+_SHARED_WHISPER_MODEL = None
+
 class WhisperRecognizer(BaseRecognizerAdapter):
     """
     On-device OpenAI Whisper Streaming Speech Recognizer.
     Executes an encoder-decoder Transformer on the local NVIDIA RTX 3050 GPU (CUDA)
     for high-precision real-time streaming speech recognition.
     """
+    @classmethod
+    def preload(cls, model_id: str = "openai/whisper-tiny.en"):
+        """Pre-loads and warms up Whisper on CUDA GPU at server startup."""
+        global _SHARED_WHISPER_PROCESSOR, _SHARED_WHISPER_MODEL
+        if _SHARED_WHISPER_MODEL is not None and _SHARED_WHISPER_PROCESSOR is not None:
+            return
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+        print(f"[Startup Preload] Loading OpenAI Whisper ({model_id}) onto {device.type.upper()} ({device_name})...")
+        try:
+            from transformers import WhisperProcessor, WhisperForConditionalGeneration
+            _SHARED_WHISPER_PROCESSOR = WhisperProcessor.from_pretrained(model_id)
+            _SHARED_WHISPER_MODEL = WhisperForConditionalGeneration.from_pretrained(model_id).to(device)
+            _SHARED_WHISPER_MODEL.eval()
+
+            # Warm-up inference pass to compile CUDA kernels and establish GPU memory context
+            dummy_pcm = np.zeros(16000, dtype=np.float32)
+            inputs = _SHARED_WHISPER_PROCESSOR(dummy_pcm, sampling_rate=16000, return_tensors="pt")
+            with torch.no_grad():
+                _SHARED_WHISPER_MODEL.generate(inputs.input_features.to(device), max_new_tokens=4)
+            print(f"[Startup Preload] OpenAI Whisper ({model_id}) pre-warmed & ready in GPU memory!")
+        except Exception as e:
+            print(f"[Startup Preload Warning] Failed to preload Whisper: {e}")
+            raise e
+
     def __init__(self, model_id: str = "openai/whisper-tiny.en"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_id = model_id
@@ -23,24 +52,13 @@ class WhisperRecognizer(BaseRecognizerAdapter):
         self.audio_bytes_buffer: bytearray = bytearray()
         self.is_running: bool = False
         self._inference_task: Optional[asyncio.Task] = None
-        self.processor = None
-        self.model = None
 
-        self._init_model()
+        # Re-use preloaded model or initialize on demand
+        if _SHARED_WHISPER_MODEL is None or _SHARED_WHISPER_PROCESSOR is None:
+            self.preload(self.model_id)
 
-    def _init_model(self):
-        """Initializes Whisper model onto CUDA GPU."""
-        try:
-            from transformers import WhisperProcessor, WhisperForConditionalGeneration
-            device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-            print(f"[Whisper] Loading {self.model_id} onto {self.device.type.upper()} ({device_name})...")
-            self.processor = WhisperProcessor.from_pretrained(self.model_id)
-            self.model = WhisperForConditionalGeneration.from_pretrained(self.model_id).to(self.device)
-            self.model.eval()
-            print(f"[Whisper] Loaded {self.model_id} on {self.device.type.upper()} successfully!")
-        except Exception as e:
-            print(f"[Whisper] Failed to load model: {e}")
-            raise e
+        self.processor = _SHARED_WHISPER_PROCESSOR
+        self.model = _SHARED_WHISPER_MODEL
 
     async def start_session(self, session_id: str, sample_rate: int = 16000) -> None:
         self.session_id = session_id
