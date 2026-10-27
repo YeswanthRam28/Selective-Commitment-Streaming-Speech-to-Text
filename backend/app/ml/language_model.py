@@ -75,33 +75,11 @@ class LanguageModel:
 
     def find_closest_lexicon_match(self, raw_word: str, max_distance: int = 2) -> Optional[str]:
         """
-        Finds the closest valid English word in the lexicon if raw_word is a near-miss phonetic slip
-        (e.g., 'transcrupt' -> 'transcript', 'lave' -> 'live').
+        Validates if raw_word is recognized in vocabulary without hardcoded slip overrides.
         """
         w = raw_word.lower().strip()
-        if w in self.words or len(w) <= 2:
+        if w in self.words:
             return w
-
-        # Common phonetic slip corrections
-        phonetic_overrides = {
-            "lave": "live",
-            "tlave": "the live",
-            "transcrupt": "transcript",
-            "pranscrupt": "transcript",
-            "plinscrupt": "transcript",
-            "evaleration": "evaluation",
-            "evaaluation": "evaluation",
-            "incrimental": "incremental",
-            "serteste": "test",
-            "terteste": "test"
-        }
-        if w in phonetic_overrides:
-            return phonetic_overrides[w]
-
-        # Find closest string matches
-        matches = difflib.get_close_matches(w, self.words, n=1, cutoff=0.72)
-        if matches:
-            return matches[0]
         return None
 
 class CTCBeamSearchDecoder:
@@ -242,17 +220,18 @@ class CTCBeamSearchDecoder:
         # Replace space token '|' with actual space
         raw_words = best_prefix.replace(self.space_char, " ").strip().split()
         
-        # Post-processing: lexicon nearest-neighbor phonetic correction
+        # Form words directly from acoustic beam output
         corrected_words = []
         word_items = []
         for w in raw_words:
             clean_w = w.lower().strip()
-            lex_match = self.lm.find_closest_lexicon_match(clean_w)
-            final_w = lex_match if lex_match else clean_w
-            corrected_words.append(final_w)
+            if not clean_w:
+                continue
+            is_in_vocab = self.lm.find_closest_lexicon_match(clean_w) is not None
+            corrected_words.append(clean_w)
             word_items.append({
-                "word": final_w,
-                "confidence": 0.94 if lex_match else 0.85
+                "word": clean_w,
+                "confidence": 0.94 if is_in_vocab else 0.82
             })
 
         final_text = " ".join(corrected_words)

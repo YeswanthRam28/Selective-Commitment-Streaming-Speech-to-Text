@@ -36,6 +36,14 @@ class DeepLearningRecognizer(BaseRecognizerAdapter):
             _SHARED_WAV2VEC2_MODEL = Wav2Vec2ForCTC.from_pretrained(model_id).to(device)
             _SHARED_WAV2VEC2_MODEL.eval()
 
+            # If fine-tuned model checkpoint exists, load weights
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            finetuned_ckpt = os.path.join(base_dir, "ml", "checkpoints", "finetuned_wav2vec2.pt")
+            if os.path.exists(finetuned_ckpt):
+                print(f"[Startup Preload] Found fine-tuned checkpoint at {finetuned_ckpt}, loading weights onto {device}...")
+                _SHARED_WAV2VEC2_MODEL.load_state_dict(torch.load(finetuned_ckpt, map_location=device))
+                print("[Startup Preload] Fine-tuned weights active!")
+
             # Warm-up pass to compile CUDA kernels and initialize memory allocations
             dummy_pcm = np.zeros(16000, dtype=np.float32)
             inputs = _SHARED_WAV2VEC2_PROCESSOR(dummy_pcm, sampling_rate=16000, return_tensors="pt")

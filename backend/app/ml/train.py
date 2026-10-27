@@ -141,8 +141,8 @@ def finetune_wav2vec2(
     def wav2vec_collate(batch):
         waveforms, texts = zip(*batch)
         inputs = processor([w.numpy() for w in waveforms], sampling_rate=16000, padding=True, return_tensors="pt")
-        with processor.as_target_processor():
-            labels = processor(list(texts), padding=True, return_tensors="pt").input_ids
+        upper_texts = [t.upper().strip() for t in texts]
+        labels = processor.tokenizer(upper_texts, padding=True, return_tensors="pt").input_ids
         # Replace padding with -100 to ignore in CTC loss
         labels = labels.masked_fill(labels == processor.tokenizer.pad_token_id, -100)
         return inputs.input_values, labels
@@ -191,11 +191,12 @@ def finetune_wav2vec2(
                 pred_texts = processor.batch_decode(pred_ids)
 
                 # Decode labels
-                labels[labels == -100] = processor.tokenizer.pad_token_id
-                target_texts = processor.batch_decode(labels, group_tokens=False)
+                labels_clean = labels.clone()
+                labels_clean[labels_clean == -100] = processor.tokenizer.pad_token_id
+                target_texts = processor.batch_decode(labels_clean, group_tokens=False)
 
                 for ref, hyp in zip(target_texts, pred_texts):
-                    wer_metrics = compute_wer(ref, hyp)
+                    wer_metrics = compute_wer(ref.lower(), hyp.lower())
                     total_wer += wer_metrics["wer"]
                     val_samples += 1
 
@@ -204,7 +205,7 @@ def finetune_wav2vec2(
 
         print(f"Epoch {epoch:02d}/{num_epochs:02d} | Train Loss: {avg_loss:.4f} | Val WER: {avg_wer:.2f}% | Time: {elapsed:.2f}s")
 
-        if avg_wer < best_wer:
+        if avg_wer <= best_wer:
             best_wer = avg_wer
             torch.save(model.state_dict(), save_path)
             print(f"  -> Best model saved to: {save_path} (Val WER: {best_wer:.2f}%)")
@@ -215,15 +216,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Selective Commitment Speech ASR Training")
     parser.add_argument("--mode", type=str, choices=["custom", "finetune"], default="finetune",
                         help="Train custom BiLSTM or fine-tune Wav2Vec2 on real speech")
-    parser.add_argument("--dataset", type=str, default="dev-clean",
-                        help="LibriSpeech subset ('dev-clean', 'test-clean') or 'custom'")
-    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=2, help="Batch size for training")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--dataset", type=str, default="custom",
+                        help="Dataset type: 'custom' or LibriSpeech subset ('dev-clean', 'test-clean')")
+    parser.add_argument("--manifest", type=str, default="app/ml/data/custom_speech/manifest.csv",
+                        help="Path to custom speech manifest CSV")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=4, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate")
     args = parser.parse_args()
 
-    # Load real speech dataset
-    speech_ds = RealSpeechDataset(dataset_type="librispeech", url=args.dataset, download=True)
+    # Load speech dataset
+    if args.dataset == "custom":
+        manifest_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "custom_speech", "manifest.csv")
+        speech_ds = RealSpeechDataset(dataset_type="custom", csv_path=manifest_p)
+    else:
+        speech_ds = RealSpeechDataset(dataset_type="librispeech", url=args.dataset, download=True)
 
     if args.mode == "finetune":
         finetune_wav2vec2(speech_ds, num_epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
